@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  publisher:
+    build: .
+    container_name: drive-meta-publisher
+    restart: unless-stopped
+    ports:
+      - "3050:3050"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./credentials:/app/credentials:ro
