@@ -1,11 +1,12 @@
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
-import cron from 'node-cron';
 import { fileURLToPath } from 'url';
 import { getPendingPosts, readDocText, downloadFile, getPublicDriveImageUrl, markPostAsPublished } from './drive.js';
 import { publishPost } from './publisher.js';
 import { createServer } from './server.js';
+import { logger } from './logger.js';
+import { startScheduler } from './scheduler.js';
 
 dotenv.config();
 
@@ -17,37 +18,41 @@ const TEMP_DIR = path.resolve(__dirname, '..', 'temp');
  * Procesa y publica la siguiente publicación disponible en la cola de Google Drive
  */
 export async function processNextPost() {
-  console.log('===========================================================');
-  console.log(`[Auto-Publisher] 🔍 Revisando Google Drive a las: ${new Date().toLocaleString()}`);
-  console.log('===========================================================');
+  logger.info(`🔍 Buscando publicaciones pendientes en Google Drive...`);
 
   // 1. Obtener lista de publicaciones pendientes
-  const pending = await getPendingPosts();
+  let pending;
+  try {
+    pending = await getPendingPosts();
+  } catch (driveErr) {
+    logger.error(`❌ Error al conectar con Google Drive: ${driveErr.message}`);
+    throw driveErr;
+  }
 
   if (pending.length === 0) {
-    console.log('[Auto-Publisher] ℹ️ No hay publicaciones pendientes en Google Drive.');
+    logger.warn('ℹ️ No hay publicaciones pendientes que empiecen por "Post" en Google Drive.');
     return { status: 'empty', message: 'No hay publicaciones pendientes' };
   }
 
   // 2. Tomar el primer post que tenga foto Y documento listo
   const readyPosts = pending.filter(p => p.imageFile && p.docFile);
   const post = readyPosts.length > 0 ? readyPosts[0] : pending[0];
-  console.log(`[Auto-Publisher] 📦 Procesando publicación: "${post.postSlug}"...`);
+  logger.info(`📦 Seleccionado para publicar: "${post.postSlug}" (${readyPosts.length} posts listos con foto y doc)`);
 
   // 3. Leer el texto del post desde el Google Doc o .txt emparejado
   let caption = '';
   if (post.docFile) {
-    console.log(`[Auto-Publisher] 📄 Leyendo texto desde: "${post.docFile.name}"...`);
+    logger.info(`📄 Leyendo contenido del texto desde: "${post.docFile.name}"...`);
     caption = await readDocText(post.docFile);
   } else {
-    console.warn(`[Auto-Publisher] ⚠️ No se encontró documento de texto emparejado con "${post.imageFile.name}".`);
+    logger.warn(`⚠️ No se encontró documento de texto emparejado con "${post.imageFile.name}". Se publicará solo con imagen.`);
   }
 
   // 4. Descargar la imagen temporalmente para publicarla
   const safeFilename = `post_${Date.now()}_${post.imageFile.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
   const localImagePath = path.join(TEMP_DIR, safeFilename);
 
-  console.log(`[Auto-Publisher] ⬇️ Descargando imagen "${post.imageFile.name}" a cache temporal...`);
+  logger.info(`⬇️ Descargando imagen "${post.imageFile.name}"...`);
   await downloadFile(post.imageFile.id, localImagePath);
 
   const imageBuffer = await fs.promises.readFile(localImagePath);
@@ -56,14 +61,15 @@ export async function processNextPost() {
   let publicImageUrl;
   try {
     publicImageUrl = await getPublicDriveImageUrl(post.imageFile.id);
-    console.log(`[Auto-Publisher] 🌐 URL pública de Google CDN para Instagram: ${publicImageUrl}`);
+    logger.info(`🌐 Imagen vinculada a Google CDN para Instagram: ${publicImageUrl.slice(0, 45)}...`);
   } catch (urlErr) {
     const publicBaseUrl = (process.env.PUBLIC_SERVER_URL || `http://localhost:${process.env.PORT || 3050}`).replace(/\/$/, '');
     publicImageUrl = `${publicBaseUrl}/media/${safeFilename}`;
-    console.log(`[Auto-Publisher] 🌐 Fallback URL local para Instagram: ${publicImageUrl}`);
+    logger.info(`🌐 Usando URL local pública de respaldo: ${publicImageUrl}`);
   }
 
-  // 6. Publicar en Facebook e Instagram
+  // 6. Publicar en Facebook e Instagram (Feed y Stories)
+  logger.info(`🚀 Enviando a Meta Graph API (Facebook Feed, Instagram Feed, Stories)...`);
   let publishResult;
   try {
     publishResult = await publishPost({
@@ -73,7 +79,7 @@ export async function processNextPost() {
       publishStory: process.env.PUBLISH_STORIES !== 'false'
     });
   } catch (pubErr) {
-    console.error(`[Auto-Publisher] ❌ Error durante la publicación:`, pubErr.message);
+    logger.error(`❌ Error durante la publicación en Meta: ${pubErr.message}`);
     if (fs.existsSync(localImagePath)) {
       await fs.promises.unlink(localImagePath).catch(() => {});
     }
@@ -81,7 +87,7 @@ export async function processNextPost() {
   }
 
   // 7. Marcar como publicado en Google Drive (renombrando con [PUBLICADO])
-  console.log(`[Auto-Publisher] 🏷️ Marcando archivos como publicados en Google Drive...`);
+  logger.info(`🏷️ Renombrando archivos en Google Drive con prefijo [PUBLICADO]...`);
   await markPostAsPublished(post);
 
   // 8. Limpiar archivo temporal de imagen local
@@ -89,14 +95,11 @@ export async function processNextPost() {
     await fs.promises.unlink(localImagePath).catch(() => {});
   }
 
-  console.log('===========================================================');
-  console.log(`[Auto-Publisher] ✅ ¡PUBLICACIÓN COMPLETADA CON ÉXITO!`);
-  console.log(`- Post procesado: ${post.postSlug}`);
-  if (publishResult.facebook) console.log(`- Facebook Feed: ${publishResult.facebook.url}`);
-  if (publishResult.instagram) console.log(`- Instagram Feed: ${publishResult.instagram.url}`);
-  if (publishResult.facebookStory) console.log(`- Facebook Story: ${publishResult.facebookStory.url}`);
-  if (publishResult.instagramStory) console.log(`- Instagram Story: ${publishResult.instagramStory.url}`);
-  console.log('===========================================================');
+  logger.success(`🎉 ¡Publicación exitosa de "${post.postSlug}"!`);
+  if (publishResult.facebook) logger.success(`   📘 Facebook Feed: ${publishResult.facebook.url}`);
+  if (publishResult.instagram) logger.success(`   📸 Instagram Feed: ${publishResult.instagram.url}`);
+  if (publishResult.facebookStory) logger.success(`   ⚡ Facebook Story publicada`);
+  if (publishResult.instagramStory) logger.success(`   ⚡ Instagram Story publicada`);
 
   // Guardar en historial local
   const historyPath = path.resolve(__dirname, '..', 'data', 'history.json');
@@ -115,7 +118,7 @@ export async function processNextPost() {
     });
     fs.writeFileSync(historyPath, JSON.stringify(history.slice(0, 50), null, 2));
   } catch (e) {
-    console.error('[History Error]', e.message);
+    logger.error(`[History Error] ${e.message}`);
   }
 
   return {
@@ -135,34 +138,21 @@ const app = createServer({
 });
 
 app.listen(PORT, async () => {
-  console.log('===========================================================');
-  console.log(`🚀 2S1M Drive-Meta-Publisher arrancado en puerto ${PORT}`);
-  console.log(`🌐 Panel de estado local: http://localhost:${PORT}`);
-  console.log('===========================================================');
+  logger.info(`===========================================================`);
+  logger.info(`🚀 2S1M Drive-Meta-Publisher arrancado en puerto ${PORT}`);
+  logger.info(`🌐 Panel de control: http://localhost:${PORT}`);
+  logger.info(`===========================================================`);
 
-  // Programación Cron
-  const cronExpression = process.env.CRON_SCHEDULE || '0 13 * * *';
-  const timezone = process.env.TIMEZONE || 'Africa/Casablanca';
-
-  cron.schedule(cronExpression, async () => {
-    try {
-      await processNextPost();
-    } catch (err) {
-      console.error('[Cron Error] Fallo al ejecutar la tarea programada:', err.message);
-    }
-  }, {
-    timezone: timezone
-  });
-
-  console.log(`⏰ Cron programado con expresión: "${cronExpression}" (Zona horaria: ${timezone})`);
+  // Iniciar el programador resiliente
+  startScheduler(processNextPost);
 
   // Si se invocó con argumento --now, ejecutar inmediatamente
   if (process.argv.includes('--now')) {
-    console.log('[CLI] Argumento --now detectado. Ejecutando publicación inmediata...');
+    logger.info('[CLI] Argumento --now detectado. Ejecutando publicación inmediata...');
     try {
       await processNextPost();
     } catch (err) {
-      console.error('[CLI Error]', err.message);
+      logger.error(`[CLI Error] ${err.message}`);
     }
   }
 });

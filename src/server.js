@@ -6,6 +6,8 @@ import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { getAuthUrl, handleAuthCallback, isGoogleAuthenticated, getGoogleUserInfo, logoutGoogle } from './auth.js';
 import { getPendingPosts } from './drive.js';
+import { logger } from './logger.js';
+import { getSchedulerStatus } from './scheduler.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -14,8 +16,8 @@ const HISTORY_PATH = path.resolve(__dirname, '..', 'data', 'history.json');
 
 // Generar token de sesión seguro derivado de las credenciales configuradas
 function getExpectedSessionToken() {
-  const user = process.env.DASHBOARD_USER || 'admin';
-  const pass = process.env.DASHBOARD_PASS || 'admin2s1m2026';
+  const user = (process.env.DASHBOARD_USER || 'admin').trim();
+  const pass = (process.env.DASHBOARD_PASS || 'admin2s1m2026').trim();
   return crypto.createHash('sha256').update(`${user}:${pass}:2s1m_secret_salt`).digest('hex');
 }
 
@@ -261,8 +263,21 @@ export function createServer(options = {}) {
   });
 
   // -----------------------------------------------------------
-  // API DE ESTADO Y PUBLICACIÓN MANUAL (Protegidas)
+  // API DE ESTADO, LOGS Y PUBLICACIÓN MANUAL (Protegidas)
   // -----------------------------------------------------------
+  app.get('/api/logs', (req, res) => {
+    res.json({ logs: logger.getLogs(200) });
+  });
+
+  app.post('/api/logs/clear', (req, res) => {
+    logger.clearLogs();
+    res.json({ success: true });
+  });
+
+  app.get('/api/scheduler-status', (req, res) => {
+    res.json(getSchedulerStatus());
+  });
+
   app.get('/api/status', async (req, res) => {
     const authenticated = isGoogleAuthenticated();
     let userInfo = null;
@@ -292,6 +307,7 @@ export function createServer(options = {}) {
       pendingPosts: pending,
       driveError,
       history,
+      scheduler: getSchedulerStatus(),
       cronSchedule: process.env.CRON_SCHEDULE || '0 10,14,18,21 * * *',
       timezone: process.env.TIMEZONE || 'Africa/Casablanca',
       facebookPageId: process.env.FACEBOOK_PAGE_ID,
@@ -337,6 +353,8 @@ export function createServer(options = {}) {
       } catch (e) {}
     }
 
+    const schedulerState = getSchedulerStatus();
+
     const pendingHtml = pendingPosts.length > 0
       ? pendingPosts.map((p, i) => `
           <div class="post-item">
@@ -356,7 +374,7 @@ export function createServer(options = {}) {
       : `<div class="empty-state">No hay más publicaciones pendientes que empiecen por "Post" en Google Drive.</div>`;
 
     const historyHtml = history.length > 0
-      ? history.slice(0, 6).map(h => `
+      ? history.slice(0, 8).map(h => `
           <div class="history-item">
             <div class="history-info">
               <div class="history-title">✅ ${h.postSlug}</div>
@@ -379,7 +397,7 @@ export function createServer(options = {}) {
         <title>2S1M Auto-Publisher - Centro de Control</title>
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <link rel="preconnect" href="https://fonts.googleapis.com">
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
         <style>
           :root {
             --bg-body: #07090e;
@@ -399,18 +417,18 @@ export function createServer(options = {}) {
             background: var(--bg-body);
             color: var(--text-main);
             margin: 0;
-            padding: 30px 20px;
+            padding: 25px 20px 50px 20px;
             -webkit-font-smoothing: antialiased;
           }
-          .container { max-width: 840px; margin: 0 auto; }
+          .container { max-width: 880px; margin: 0 auto; }
           
           /* Header */
           .app-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 25px;
-            padding-bottom: 18px;
+            margin-bottom: 20px;
+            padding-bottom: 16px;
             border-bottom: 1px solid var(--border-color);
           }
           .brand { display: flex; align-items: center; gap: 12px; }
@@ -483,41 +501,160 @@ export function createServer(options = {}) {
             margin-bottom: 16px;
             display: flex;
             align-items: center;
-            gap: 8px;
+            justify-content: space-between;
           }
 
-          /* Configuration Grid */
-          .config-grid {
+          /* Monitor Card (Reloj & Próxima Franja) */
+          .monitor-banner {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-            gap: 12px;
+            grid-template-columns: 1fr 1fr;
+            gap: 14px;
             margin-bottom: 16px;
           }
-          .config-box {
-            background: var(--bg-surface);
-            border: 1px solid var(--border-color);
-            border-radius: 10px;
-            padding: 14px;
+          .monitor-box {
+            background: #131a2e;
+            border: 1px solid #233052;
+            border-radius: 12px;
+            padding: 16px;
+            position: relative;
+            overflow: hidden;
           }
-          .config-label { font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600; letter-spacing: 0.05em; }
-          .config-val { font-size: 0.95rem; font-weight: 700; color: #fff; margin-top: 4px; }
-          .config-sub { font-size: 0.75rem; color: #38bdf8; margin-top: 2px; }
+          .monitor-label {
+            font-size: 0.72rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            font-weight: 700;
+            margin-bottom: 6px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+          }
+          .monitor-value {
+            font-family: 'Outfit', sans-serif;
+            font-size: 1.6rem;
+            font-weight: 800;
+            color: #fff;
+            letter-spacing: -0.02em;
+          }
+          .monitor-sub {
+            font-size: 0.8rem;
+            color: #38bdf8;
+            margin-top: 4px;
+            font-weight: 500;
+          }
 
+          .next-highlight {
+            background: linear-gradient(135deg, rgba(249, 115, 22, 0.12), rgba(234, 88, 12, 0.05));
+            border-color: rgba(249, 115, 22, 0.35);
+          }
+          .next-highlight .monitor-value {
+            color: #fb923c;
+          }
+
+          /* Slots row */
           .slots-row {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
             gap: 10px;
-            margin-top: 10px;
+            margin-top: 12px;
           }
           .slot-card {
-            background: rgba(249, 115, 22, 0.08);
-            border: 1px solid rgba(249, 115, 22, 0.25);
-            border-radius: 8px;
-            padding: 10px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 12px 10px;
             text-align: center;
+            position: relative;
+            transition: all 0.2s;
           }
-          .slot-time { font-size: 1.1rem; font-weight: 800; color: #fb923c; font-family: 'Outfit', sans-serif; }
-          .slot-desc { font-size: 0.7rem; color: var(--text-muted); margin-top: 2px; }
+          .slot-time { font-size: 1.15rem; font-weight: 800; color: #fff; font-family: 'Outfit', sans-serif; }
+          .slot-desc { font-size: 0.7rem; color: var(--text-muted); margin-top: 3px; }
+          .slot-badge-state {
+            display: inline-block;
+            font-size: 0.65rem;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: 700;
+            margin-top: 6px;
+            text-transform: uppercase;
+          }
+          .state-done { background: rgba(16, 185, 129, 0.18); color: #34d399; }
+          .state-next { background: rgba(249, 115, 22, 0.25); color: #fb923c; border: 1px solid rgba(249, 115, 22, 0.4); }
+          .state-wait { background: rgba(148, 163, 184, 0.1); color: var(--text-muted); }
+
+          /* Terminal / Logs */
+          .terminal-card {
+            background: #090c15;
+            border: 1px solid #1c263c;
+            border-radius: 12px;
+            overflow: hidden;
+            margin-top: 10px;
+          }
+          .terminal-bar {
+            background: #111728;
+            padding: 10px 14px;
+            border-bottom: 1px solid #1c263c;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+          }
+          .terminal-title {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            color: #94a3b8;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+          }
+          .terminal-controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+          }
+          .btn-term {
+            background: #1c253b;
+            border: 1px solid #2d3b5d;
+            color: #cbd5e1;
+            font-size: 0.72rem;
+            padding: 4px 10px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+          }
+          .btn-term:hover { background: #283654; color: #fff; }
+          .terminal-body {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            padding: 14px;
+            height: 250px;
+            overflow-y: auto;
+            color: #e2e8f0;
+            background: #060810;
+            line-height: 1.55;
+          }
+          .log-line {
+            display: flex;
+            gap: 10px;
+            padding: 2px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.02);
+            word-break: break-word;
+          }
+          .log-time { color: #64748b; white-space: nowrap; flex-shrink: 0; }
+          .log-tag {
+            font-weight: 700;
+            border-radius: 3px;
+            padding: 0 4px;
+            font-size: 0.68rem;
+            flex-shrink: 0;
+            height: fit-content;
+          }
+          .tag-info { background: rgba(59, 130, 246, 0.2); color: #60a5fa; }
+          .tag-success { background: rgba(16, 185, 129, 0.25); color: #34d399; }
+          .tag-warn { background: rgba(245, 158, 11, 0.25); color: #fbbf24; }
+          .tag-error { background: rgba(239, 68, 68, 0.25); color: #f87171; }
+          .tag-cron { background: rgba(168, 85, 247, 0.25); color: #c084fc; }
+          .log-msg { color: #cbd5e1; flex: 1; }
 
           /* User Bar */
           .user-bar {
@@ -566,10 +703,7 @@ export function createServer(options = {}) {
           }
           .btn:hover { background: linear-gradient(135deg, #fb923c, #f97316); transform: translateY(-1px); }
           .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
-          .btn-google {
-            background: #2563eb;
-            box-shadow: 0 4px 15px rgba(37, 99, 235, 0.3);
-          }
+          .btn-google { background: #2563eb; box-shadow: 0 4px 15px rgba(37, 99, 235, 0.3); }
           .btn-google:hover { background: #1d4ed8; }
 
           /* Posts list */
@@ -637,7 +771,8 @@ export function createServer(options = {}) {
           }
           .empty-state { text-align: center; color: var(--text-muted); font-size: 0.85rem; padding: 25px 0; }
 
-          @media (max-width: 600px) {
+          @media (max-width: 650px) {
+            .monitor-banner { grid-template-columns: 1fr; }
             .slots-row { grid-template-columns: repeat(2, 1fr); }
             .post-item, .history-item { flex-direction: column; align-items: flex-start; gap: 10px; }
           }
@@ -683,52 +818,46 @@ export function createServer(options = {}) {
             </div>
           `}
 
-          <!-- Configuration Panel -->
+          <!-- Monitor de Programación & Horario Oficial -->
           <div class="card">
-            <div class="card-title">⚙️ Configuración del Sistema (Activa)</div>
+            <div class="card-title">
+              <span>⏰ Estado del Programador de Publicaciones</span>
+              <span style="font-size:0.8rem; font-weight:500; color:var(--text-muted);">Zona: ${schedulerState.timezone}</span>
+            </div>
 
-            <div class="config-grid">
-              <div class="config-box">
-                <div class="config-label">Frecuencia Diaria</div>
-                <div class="config-val">4 Posts + 4 Stories</div>
-                <div class="config-sub">Espaciado automático</div>
+            <div class="monitor-banner">
+              <div class="monitor-box">
+                <div class="monitor-label">🕒 Reloj en Casablanca (Marruecos)</div>
+                <div class="monitor-value" id="casablanca-clock">${schedulerState.currentTimeOnly}</div>
+                <div class="monitor-sub">Fecha: <span id="casablanca-date">${schedulerState.currentDateOnly}</span></div>
               </div>
-              <div class="config-box">
-                <div class="config-label">Zona Horaria</div>
-                <div class="config-val">Casablanca (GMT+1)</div>
-                <div class="config-sub">Marruecos Oficial</div>
-              </div>
-              <div class="config-box">
-                <div class="config-label">Canales por Franja</div>
-                <div class="config-val">4 Destinos</div>
-                <div class="config-sub">FB Feed, IG Feed, FB & IG Stories</div>
-              </div>
-              <div class="config-box">
-                <div class="config-label">Filtro Google Drive</div>
-                <div class="config-val">Nombre: "Post *"</div>
-                <div class="config-sub">My Drive (Raíz)</div>
+
+              <div class="monitor-box next-highlight">
+                <div class="monitor-label">🎯 Próxima Publicación Automática</div>
+                <div class="monitor-value" id="next-slot-val">${schedulerState.nextSlot.nextSlotFormatted}</div>
+                <div class="monitor-sub" id="next-slot-label">${schedulerState.nextSlot.label}</div>
               </div>
             </div>
 
-            <div style="margin-top: 15px;">
-              <div class="config-label" style="margin-bottom: 8px;">⏰ Las 4 Franjas Horarias Diarias:</div>
+            <div>
+              <div class="monitor-label" style="margin-bottom:6px;">Las 4 Franjas Horarias del Día:</div>
               <div class="slots-row">
-                <div class="slot-card">
-                  <div class="slot-time">10:00</div>
-                  <div class="slot-desc">Franja 1 (Mañana)</div>
-                </div>
-                <div class="slot-card">
-                  <div class="slot-time">14:00</div>
-                  <div class="slot-desc">Franja 2 (Mediodía)</div>
-                </div>
-                <div class="slot-card">
-                  <div class="slot-time">18:00</div>
-                  <div class="slot-desc">Franja 3 (Tarde)</div>
-                </div>
-                <div class="slot-card">
-                  <div class="slot-time">21:00</div>
-                  <div class="slot-desc">Franja 4 (Noche)</div>
-                </div>
+                ${[10, 14, 18, 21].map(slot => {
+                  const slotKey = `${schedulerState.currentDateOnly}_${slot}`;
+                  const isDone = schedulerState.executedToday.includes(slotKey);
+                  const isNext = schedulerState.nextSlot.nextSlotHour === slot && !schedulerState.nextSlot.isTomorrow;
+                  let badge = '<span class="slot-badge-state state-wait">En espera</span>';
+                  if (isDone) badge = '<span class="slot-badge-state state-done">✅ Publicado</span>';
+                  else if (isNext) badge = '<span class="slot-badge-state state-next">⚡ Siguiente</span>';
+
+                  return `
+                    <div class="slot-card" style="${isNext ? 'border-color: rgba(249,115,22,0.4);' : ''}">
+                      <div class="slot-time">${String(slot).padStart(2, '0')}:00</div>
+                      <div class="slot-desc">Franja ${slot < 12 ? 'Mañana' : slot < 16 ? 'Mediodía' : slot < 20 ? 'Tarde' : 'Noche'}</div>
+                      <div>${badge}</div>
+                    </div>
+                  `;
+                }).join('')}
               </div>
             </div>
 
@@ -742,6 +871,33 @@ export function createServer(options = {}) {
             ` : ''}
           </div>
 
+          <!-- Consola de Logs en Vivo -->
+          <div class="card">
+            <div class="card-title">
+              <span>💻 Consola de Registros en Vivo (Live Logs)</span>
+              <div class="terminal-controls">
+                <label style="font-size:0.75rem; color:var(--text-muted); display:inline-flex; align-items:center; gap:4px; cursor:pointer;">
+                  <input type="checkbox" id="auto-refresh-logs" checked> Auto-recarga
+                </label>
+                <button class="btn-term" onclick="fetchLogs()">🔄 Refrescar</button>
+                <button class="btn-term" onclick="clearLogs()">🧹 Limpiar</button>
+              </div>
+            </div>
+
+            <div class="terminal-card">
+              <div class="terminal-bar">
+                <div class="terminal-title">
+                  <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#10b981;"></span>
+                  drive-meta-publisher / output.log
+                </div>
+                <div style="font-size:0.7rem; color:#64748b;" id="log-count">0 entradas</div>
+              </div>
+              <div class="terminal-body" id="terminal-body">
+                <div style="color:#64748b;">Cargando registros del sistema...</div>
+              </div>
+            </div>
+          </div>
+
           <!-- Pending Posts -->
           ${authenticated ? `
             <div class="card">
@@ -750,7 +906,7 @@ export function createServer(options = {}) {
                   📦 Cola de Posts Pendientes en Google Drive (${pendingPosts.length})
                 </div>
                 <button onclick="location.reload()" style="background:var(--bg-surface); border:1px solid var(--border-color); color:var(--text-muted); padding:5px 10px; border-radius:6px; cursor:pointer; font-size:0.8rem;">
-                  🔄 Actualizar
+                  🔄 Actualizar Cola
                 </button>
               </div>
 
@@ -767,6 +923,7 @@ export function createServer(options = {}) {
         </div>
 
         <script>
+          // Publicación manual
           async function publishNow() {
             const btn = document.getElementById('btn-pub');
             const status = document.getElementById('pub-status');
@@ -779,11 +936,13 @@ export function createServer(options = {}) {
               const data = await res.json();
               if (data.success) {
                 status.innerHTML = '<span style="color:#34d399; font-weight:600;">✅ ¡Post y Story publicados exitosamente en ambas redes! Actualizando panel...</span>';
+                fetchLogs();
                 setTimeout(() => location.reload(), 2500);
               } else {
                 status.innerHTML = '<span style="color:#f87171;">❌ Error: ' + (data.error || 'Fallo desconocido') + '</span>';
                 btn.disabled = false;
                 btn.textContent = '🚀 Publicar Siguiente Post Ahora (Feed + Stories)';
+                fetchLogs();
               }
             } catch (e) {
               status.innerHTML = '<span style="color:#f87171;">❌ Error de conexión</span>';
@@ -791,6 +950,82 @@ export function createServer(options = {}) {
               btn.textContent = '🚀 Publicar Siguiente Post Ahora (Feed + Stories)';
             }
           }
+
+          // Cargar y mostrar logs en vivo
+          let lastLogCount = 0;
+          async function fetchLogs() {
+            try {
+              const res = await fetch('/api/logs');
+              const data = await res.json();
+              const term = document.getElementById('terminal-body');
+              const countEl = document.getElementById('log-count');
+
+              if (!data.logs || data.logs.length === 0) {
+                term.innerHTML = '<div style="color:#64748b;">(No hay registros recientes aún)</div>';
+                countEl.textContent = '0 entradas';
+                return;
+              }
+
+              countEl.textContent = data.logs.length + ' entradas';
+
+              term.innerHTML = data.logs.map(l => {
+                const tagClass = 'tag-' + (l.level || 'info');
+                return \`
+                  <div class="log-line">
+                    <span class="log-time">\${l.timeStr || ''}</span>
+                    <span class="log-tag \${tagClass}">[\${(l.level || 'INFO').toUpperCase()}]</span>
+                    <span class="log-msg">\${escapeHtml(l.message)}</span>
+                  </div>
+                \`;
+              }).join('');
+
+              // Auto-scroll al final si llegaron nuevos logs
+              if (data.logs.length !== lastLogCount) {
+                lastLogCount = data.logs.length;
+                term.scrollTop = term.scrollHeight;
+              }
+            } catch (e) {
+              console.error('Error fetching logs', e);
+            }
+          }
+
+          async function clearLogs() {
+            await fetch('/api/logs/clear', { method: 'POST' });
+            fetchLogs();
+          }
+
+          // Actualizar estado del scheduler
+          async function updateSchedulerStatus() {
+            try {
+              const res = await fetch('/api/scheduler-status');
+              const data = await res.json();
+              if (data.currentTimeOnly) {
+                document.getElementById('casablanca-clock').textContent = data.currentTimeOnly;
+                document.getElementById('casablanca-date').textContent = data.currentDateOnly;
+              }
+              if (data.nextSlot) {
+                document.getElementById('next-slot-val').textContent = data.nextSlot.nextSlotFormatted;
+                document.getElementById('next-slot-label').textContent = data.nextSlot.label;
+              }
+            } catch (e) {}
+          }
+
+          function escapeHtml(str) {
+            return String(str)
+              .replace(/&/g, '&amp;')
+              .replace(/</g, '&lt;')
+              .replace(/>/g, '&gt;')
+              .replace(/"/g, '&quot;');
+          }
+
+          // Iniciar polling
+          fetchLogs();
+          setInterval(() => {
+            if (document.getElementById('auto-refresh-logs').checked) {
+              fetchLogs();
+            }
+            updateSchedulerStatus();
+          }, 4000);
         </script>
       </body>
       </html>
