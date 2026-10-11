@@ -63,9 +63,9 @@ function getBaseName(filename) {
 }
 
 /**
- * Obtiene la lista de publicaciones pendientes en Google Drive
+ * Obtiene la lista de publicaciones para el Feed pendientes en Google Drive
  * REGLA ESTRICTA:
- * - El nombre DEBE empezar por "Post" (ej: Post 1, Post 2, Post 3, etc.)
+ * - El nombre DEBE empezar por "Post" (ej: Post 1, Post 2, Post 3)
  * - Debe ser imagen (.jpg, .jpeg, .png) o documento (Google Doc o .txt)
  * - Ignora todo lo que empiece por [PUBLICADO]
  */
@@ -127,7 +127,7 @@ export async function getPendingPosts() {
     });
   }
 
-  // Ordenar numéricamente y alfabéticamente (Post 1, Post 2, Post 3, Post 4...)
+  // Ordenar numéricamente y alfabéticamente (Post 1, Post 2, Post 3...)
   pendingPosts.sort((a, b) => {
     const numA = (a.postSlug.match(/\d+/) || [0])[0];
     const numB = (b.postSlug.match(/\d+/) || [0])[0];
@@ -136,6 +136,52 @@ export async function getPendingPosts() {
   });
 
   return pendingPosts;
+}
+
+export const getPendingFeedPosts = getPendingPosts;
+
+/**
+ * Obtiene la lista de Stories dedicadas pendientes en Google Drive
+ * REGLA ESTRICTA:
+ * - El nombre DEBE empezar por "Stories 2s1m" (ej: Stories 2s1m - 1 - ..., Stories 2s1m - 2 - ...)
+ * - Formato vertical (9:16) .jpg, .jpeg, .png
+ * - Ignora todo lo que empiece por [PUBLICADO]
+ */
+export async function getPendingStories() {
+  const drive = await getDriveClient();
+
+  const res = await drive.files.list({
+    q: "trashed = false and name contains 'Stories 2s1m'",
+    fields: 'files(id, name, mimeType, size, createdTime)',
+    pageSize: 100,
+    orderBy: 'name'
+  });
+
+  const allFiles = res.data.files || [];
+
+  const storyFiles = allFiles.filter(f => {
+    const name = f.name.trim();
+    if (name.startsWith('[PUBLICADO]') || name.startsWith('[ERROR]')) return false;
+    const isImage = f.mimeType.startsWith('image/') || /\.(jpe?g|png|webp)$/i.test(name);
+    return isImage && name.toLowerCase().startsWith('stories 2s1m');
+  });
+
+  const pendingStories = storyFiles.map(f => ({
+    id: f.id,
+    name: f.name,
+    storySlug: f.name.replace(/\.[^/.]+$/, '').trim(),
+    mimeType: f.mimeType
+  }));
+
+  // Ordenar numéricamente: Stories 2s1m - 1, Stories 2s1m - 2, etc.
+  pendingStories.sort((a, b) => {
+    const numA = (a.storySlug.match(/\d+/) || [0])[0];
+    const numB = (b.storySlug.match(/\d+/) || [0])[0];
+    if (numA !== numB) return Number(numA) - Number(numB);
+    return a.storySlug.localeCompare(b.storySlug);
+  });
+
+  return pendingStories;
 }
 
 /**
@@ -223,7 +269,7 @@ export async function getPublicDriveImageUrl(fileId) {
 }
 
 /**
- * Marca el post como publicado en Google Drive:
+ * Marca el post de Feed como publicado en Google Drive:
  * Renombra la imagen y el documento a "[PUBLICADO] Post..."
  */
 export async function markPostAsPublished(post) {
@@ -252,6 +298,27 @@ export async function markPostAsPublished(post) {
       console.log(`[Drive] Documento renombrado a: "${newDocName}"`);
     } catch (err) {
       console.error(`[Drive] Error al renombrar documento:`, err.message);
+    }
+  }
+}
+
+/**
+ * Marca una Story como publicada en Google Drive:
+ * Renombra el archivo a "[PUBLICADO] Stories 2s1m..."
+ */
+export async function markStoryAsPublished(story) {
+  const drive = await getDriveClient();
+
+  if (story && story.id) {
+    const newName = `[PUBLICADO] ${story.name}`;
+    try {
+      await drive.files.update({
+        fileId: story.id,
+        requestBody: { name: newName }
+      });
+      console.log(`[Drive] Story renombrada a: "${newName}"`);
+    } catch (err) {
+      console.error(`[Drive] Error al renombrar Story:`, err.message);
     }
   }
 }

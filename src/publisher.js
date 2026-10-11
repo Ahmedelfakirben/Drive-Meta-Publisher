@@ -241,14 +241,12 @@ export async function publishToInstagramStory(publicImageUrl) {
 }
 
 /**
- * Publica simultáneamente en Facebook e Instagram (Tanto Feed como Stories)
+ * Publica un Post exclusivamente en los Feeds de Facebook e Instagram
  */
-export async function publishPost({ imageBuffer, publicImageUrl, caption, publishStory = true }) {
+export async function publishFeedPost({ imageBuffer, publicImageUrl, caption }) {
   const results = {
     facebook: null,
     instagram: null,
-    facebookStory: null,
-    instagramStory: null,
     errors: []
   };
 
@@ -268,28 +266,63 @@ export async function publishPost({ imageBuffer, publicImageUrl, caption, publis
     results.errors.push(`Instagram Feed: ${err.message}`);
   }
 
-  // 3. Stories (en ambas redes con la misma foto)
-  if (publishStory) {
-    // Facebook Story
-    try {
-      results.facebookStory = await publishToFacebookStory(imageBuffer);
-    } catch (err) {
-      console.error('[Facebook Story Error]', err.message);
-      results.errors.push(`Facebook Story: ${err.message}`);
-    }
-
-    // Instagram Story
-    try {
-      results.instagramStory = await publishToInstagramStory(publicImageUrl);
-    } catch (err) {
-      console.error('[Instagram Story Error]', err.message);
-      results.errors.push(`Instagram Story: ${err.message}`);
-    }
-  }
-
   if (!results.facebook && !results.instagram) {
     throw new Error(`Falló la publicación en las redes principales: ${results.errors.join(' | ')}`);
   }
 
   return results;
+}
+
+/**
+ * Publica una Story vertical exclusiva en las Stories de Facebook e Instagram
+ */
+export async function publishDedicatedStory({ imageBuffer, publicImageUrl }) {
+  const results = {
+    facebookStory: null,
+    instagramStory: null,
+    errors: []
+  };
+
+  // 1. Facebook Story
+  try {
+    results.facebookStory = await publishToFacebookStory(imageBuffer);
+  } catch (err) {
+    console.error('[Facebook Story Error]', err.message);
+    results.errors.push(`Facebook Story: ${err.message}`);
+  }
+
+  // 2. Instagram Story
+  try {
+    results.instagramStory = await publishToInstagramStory(publicImageUrl);
+  } catch (err) {
+    console.error('[Instagram Story Error]', err.message);
+    results.errors.push(`Instagram Story: ${err.message}`);
+  }
+
+  if (!results.facebookStory && !results.instagramStory) {
+    throw new Error(`Falló la publicación de Story: ${results.errors.join(' | ')}`);
+  }
+
+  return results;
+}
+
+/**
+ * Compatibilidad hacia atrás
+ */
+export async function publishPost({ imageBuffer, publicImageUrl, caption, publishStory = false }) {
+  const feedResults = await publishFeedPost({ imageBuffer, publicImageUrl, caption });
+  let storyResults = { facebookStory: null, instagramStory: null };
+
+  if (publishStory) {
+    try {
+      storyResults = await publishDedicatedStory({ imageBuffer, publicImageUrl });
+    } catch (e) {
+      console.warn('[Story Warning]', e.message);
+    }
+  }
+
+  return {
+    ...feedResults,
+    ...storyResults
+  };
 }

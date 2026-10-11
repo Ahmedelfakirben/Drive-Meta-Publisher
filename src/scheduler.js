@@ -9,12 +9,24 @@ const DATA_DIR = path.resolve(__dirname, '..', 'data');
 const SLOTS_FILE = path.resolve(DATA_DIR, 'executed_slots.json');
 
 const TIMEZONE = process.env.TIMEZONE || 'Africa/Casablanca';
-const DEFAULT_SLOTS = [10, 14, 18, 21];
+
+/**
+ * Las 7 Franjas Diarias Oficiales (3 Posts de Feed + 4 Stories Exclusivas)
+ */
+export const SCHEDULE_SLOTS = [
+  { time: '10:00', hour: 10, minute: 0, type: 'story', index: 1, label: 'Story 1 (Aeronáutica / Llegadas)' },
+  { time: '11:30', hour: 11, minute: 30, type: 'feed', index: 1, label: 'Post 1 (VIP & Aeropuertos)' },
+  { time: '13:30', hour: 13, minute: 30, type: 'story', index: 2, label: 'Story 2 (Tarifas 250 DH/día)' },
+  { time: '15:30', hour: 15, minute: 30, type: 'feed', index: 2, label: 'Post 2 (Afiche Comercial)' },
+  { time: '18:00', hour: 18, minute: 0, type: 'story', index: 3, label: 'Story 3 (Escapadas / Ruta norte)' },
+  { time: '20:00', hour: 20, minute: 0, type: 'feed', index: 3, label: 'Post 3 (Lifestyle / Noche)' },
+  { time: '21:30', hour: 21, minute: 30, type: 'story', index: 4, label: 'Story 4 (Contacto WhatsApp / CTA)' }
+];
 
 let lastExecutionInfo = null;
 let isPublishing = false;
 let checkInterval = null;
-let lastHeartbeatHour = -1;
+let lastHeartbeatSlot = '';
 
 function getExecutedSlots() {
   if (fs.existsSync(SLOTS_FILE)) {
@@ -25,11 +37,11 @@ function getExecutedSlots() {
   return {};
 }
 
-function saveExecutedSlot(slotKey) {
+function saveExecutedSlot(slotKey, details) {
   const data = getExecutedSlots();
   data[slotKey] = {
     executedAt: new Date().toISOString(),
-    success: true
+    ...details
   };
   try {
     fs.writeFileSync(SLOTS_FILE, JSON.stringify(data, null, 2));
@@ -70,49 +82,43 @@ export function getCasablancaDate() {
 }
 
 /**
- * Extrae las horas configuradas del cron (ej: '0 10,14,18,21 * * *' -> [10, 14, 18, 21])
- */
-export function getConfiguredSlots() {
-  const cronExpr = process.env.CRON_SCHEDULE || '0 10,14,18,21 * * *';
-  const parts = cronExpr.trim().split(/\s+/);
-  if (parts.length >= 2 && parts[1] !== '*') {
-    const hours = parts[1].split(',').map(h => parseInt(h, 10)).filter(h => !isNaN(h) && h >= 0 && h <= 23);
-    if (hours.length > 0) return hours.sort((a, b) => a - b);
-  }
-  return DEFAULT_SLOTS;
-}
-
-/**
- * Calcula la próxima franja horaria programada y los segundos restantes
+ * Calcula la próxima franja horaria programada y los minutos restantes
  */
 export function getNextSlotInfo() {
-  const { hour, minute, second, dateStr } = getCasablancaDate();
-  const slots = getConfiguredSlots();
+  const { hour, minute } = getCasablancaDate();
+  const currentTotalMinutes = hour * 60 + minute;
 
-  // Buscar el siguiente slot hoy
-  let nextSlot = slots.find(s => s > hour || (s === hour && minute === 0 && second === 0));
-  let isTomorrow = false;
+  // Buscar el primer slot de hoy que aún no haya vencido
+  const nextToday = SCHEDULE_SLOTS.find(s => {
+    const slotTotalMinutes = s.hour * 60 + s.minute;
+    return slotTotalMinutes > currentTotalMinutes;
+  });
 
-  if (nextSlot === undefined) {
-    // Si ya pasaron todas las horas de hoy, la próxima es la primera de mañana
-    nextSlot = slots[0];
-    isTomorrow = true;
+  if (nextToday) {
+    const slotMinutes = nextToday.hour * 60 + nextToday.minute;
+    const diff = slotMinutes - currentTotalMinutes;
+    return {
+      slot: nextToday,
+      time: nextToday.time,
+      type: nextToday.type,
+      label: nextToday.label,
+      isTomorrow: false,
+      diffMinutes: Math.max(1, diff),
+      badgeText: `Hoy a las ${nextToday.time} (en ${diff} min)`
+    };
   }
 
-  // Calcular minutos restantes
-  let diffMinutes = 0;
-  if (!isTomorrow) {
-    diffMinutes = (nextSlot * 60) - (hour * 60 + minute);
-  } else {
-    diffMinutes = (24 * 60 - (hour * 60 + minute)) + (nextSlot * 60);
-  }
-
+  // Si ya pasaron todos los de hoy, la próxima es la primera de mañana
+  const firstTomorrow = SCHEDULE_SLOTS[0];
+  const diffTomorrow = (24 * 60 - currentTotalMinutes) + (firstTomorrow.hour * 60 + firstTomorrow.minute);
   return {
-    nextSlotHour: nextSlot,
-    nextSlotFormatted: `${String(nextSlot).padStart(2, '0')}:00`,
-    isTomorrow,
-    diffMinutes: Math.max(0, diffMinutes),
-    label: isTomorrow ? `Mañana a las ${nextSlot}:00` : `Hoy a las ${nextSlot}:00 (en ${diffMinutes} min)`
+    slot: firstTomorrow,
+    time: firstTomorrow.time,
+    type: firstTomorrow.type,
+    label: firstTomorrow.label,
+    isTomorrow: true,
+    diffMinutes: Math.max(1, diffTomorrow),
+    badgeText: `Mañana a las ${firstTomorrow.time} (en ${Math.round(diffTomorrow / 60)}h)`
   };
 }
 
@@ -122,7 +128,6 @@ export function getNextSlotInfo() {
 export function getSchedulerStatus() {
   const casablanca = getCasablancaDate();
   const next = getNextSlotInfo();
-  const slots = getConfiguredSlots();
   const executed = getExecutedSlots();
 
   return {
@@ -130,7 +135,7 @@ export function getSchedulerStatus() {
     casablancaTime: `${casablanca.dateStr} ${casablanca.timeStr}`,
     currentTimeOnly: casablanca.timeStr,
     currentDateOnly: casablanca.dateStr,
-    configuredSlots: slots,
+    slots: SCHEDULE_SLOTS,
     nextSlot: next,
     isPublishing,
     lastExecution: lastExecutionInfo,
@@ -139,58 +144,84 @@ export function getSchedulerStatus() {
 }
 
 /**
- * Inicia el programador resiliente
+ * Inicia el programador resiliente para las 7 franjas
+ * @param {Object} handlers - { onPublishFeed, onPublishStory }
  */
-export function startScheduler(publishCallback) {
-  const slots = getConfiguredSlots();
-  logger.info(`⏰ Programador resiliente iniciado. Horarios en ${TIMEZONE}: ${slots.map(s => s + ':00').join(', ')}`);
+export function startScheduler(handlers = {}) {
+  logger.info(`⏰ Programador resiliente iniciado. 7 franjas en ${TIMEZONE}:`);
+  SCHEDULE_SLOTS.forEach(s => {
+    logger.info(`   - ${s.time} ➔ [${s.type.toUpperCase()}] ${s.label}`);
+  });
 
   const next = getNextSlotInfo();
-  logger.info(`🎯 Próxima publicación prevista: ${next.label}`);
+  logger.info(`🎯 Próxima ejecución: ${next.badgeText} - ${next.label}`);
 
-  // Chequeo cada 15 segundos
   checkInterval = setInterval(async () => {
     if (isPublishing) return;
 
     const cb = getCasablancaDate();
-    const slotKey = `${cb.dateStr}_${cb.hour}`;
+    const currentTotalMinutes = cb.hour * 60 + cb.minute;
     const executed = getExecutedSlots();
 
-    // Heartbeat informativo una vez por hora
-    if (cb.minute === 0 && cb.hour !== lastHeartbeatHour) {
-      lastHeartbeatHour = cb.hour;
-      const nextInfo = getNextSlotInfo();
-      logger.info(`💓 [Heartbeat] Hora Casablanca: ${cb.timeStr}. Próxima franja: ${nextInfo.label}`);
+    // Heartbeat cada hora
+    const hbKey = `${cb.dateStr}_${cb.hour}`;
+    if (cb.minute === 0 && lastHeartbeatSlot !== hbKey) {
+      lastHeartbeatSlot = hbKey;
+      const n = getNextSlotInfo();
+      logger.info(`💓 [Heartbeat] Hora Casablanca: ${cb.timeStr}. Próxima franja: ${n.badgeText} (${n.label})`);
     }
 
-    // Comprobar si la hora actual coincide con un slot programado
-    if (slots.includes(cb.hour)) {
-      if (!executed[slotKey]) {
-        // Ejecutar publicación para este slot
-        isPublishing = true;
-        logger.cron(`🚀 [Franja ${cb.hour}:00] Iniciando publicación automática programada...`);
+    // Comprobar si la hora y minuto coinciden con un slot
+    for (const slot of SCHEDULE_SLOTS) {
+      const slotTotalMinutes = slot.hour * 60 + slot.minute;
+      const slotKey = `${cb.dateStr}_${slot.time}`;
 
-        try {
-          const result = await publishCallback();
-          saveExecutedSlot(slotKey);
-          lastExecutionInfo = {
-            slot: `${cb.hour}:00`,
-            timestamp: new Date().toISOString(),
-            status: 'success',
-            postSlug: result?.postSlug || 'Post publicado',
-            results: result?.results
-          };
-          logger.success(`✅ [Franja ${cb.hour}:00] Publicación completada con éxito: "${result?.postSlug || ''}"`);
-        } catch (err) {
-          lastExecutionInfo = {
-            slot: `${cb.hour}:00`,
-            timestamp: new Date().toISOString(),
-            status: 'error',
-            error: err.message
-          };
-          logger.error(`❌ [Franja ${cb.hour}:00] Error al publicar: ${err.message}`);
-        } finally {
-          isPublishing = false;
+      // Si estamos en la ventana de este slot (desde el minuto exacto hasta los siguientes 45 minutos)
+      // y aún no ha sido ejecutado hoy
+      if (currentTotalMinutes >= slotTotalMinutes && currentTotalMinutes < slotTotalMinutes + 50) {
+        if (!executed[slotKey]) {
+          isPublishing = true;
+          const isFeed = slot.type === 'feed';
+          logger.cron(`🚀 [Franja ${slot.time}] Ejecutando ${isFeed ? 'Post de Feed' : 'Story 2S1M'}: "${slot.label}"...`);
+
+          try {
+            let result;
+            if (isFeed && typeof handlers.onPublishFeed === 'function') {
+              result = await handlers.onPublishFeed();
+            } else if (!isFeed && typeof handlers.onPublishStory === 'function') {
+              result = await handlers.onPublishStory();
+            }
+
+            saveExecutedSlot(slotKey, {
+              type: slot.type,
+              status: 'success',
+              title: result?.postSlug || result?.storySlug || slot.label
+            });
+
+            lastExecutionInfo = {
+              slot: slot.time,
+              type: slot.type,
+              label: slot.label,
+              timestamp: new Date().toISOString(),
+              status: 'success',
+              title: result?.postSlug || result?.storySlug || 'Publicación exitosa'
+            };
+
+            logger.success(`✅ [Franja ${slot.time}] ¡${isFeed ? 'Post' : 'Story'} publicado y renombrado en Drive!`);
+          } catch (err) {
+            lastExecutionInfo = {
+              slot: slot.time,
+              type: slot.type,
+              label: slot.label,
+              timestamp: new Date().toISOString(),
+              status: 'error',
+              error: err.message
+            };
+            logger.error(`❌ [Franja ${slot.time}] Error al publicar: ${err.message}`);
+          } finally {
+            isPublishing = false;
+          }
+          break;
         }
       }
     }

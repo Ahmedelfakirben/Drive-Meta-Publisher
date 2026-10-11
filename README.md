@@ -1,68 +1,60 @@
-# 🚗 2S1M Drive-Meta-Publisher
+# 🚗 2S1M Auto-Publisher (3 Posts de Feed + 4 Stories Exclusivas)
 
-Sistema autónomo para publicar automáticamente imágenes y textos generados por **Spark** desde **Google Drive** hacia **Facebook e Instagram** (Feed + Stories) según un horario programado.
+Sistema autónomo para publicar automáticamente imágenes y textos generados por **Spark** desde **Google Drive** hacia **Facebook e Instagram** según un horario optimizado para Marruecos.
 
-Incluye un **Panel de Control Web** moderno con autenticación para monitorear el estado, ver los posts en cola, el historial de publicaciones y forzar publicaciones manuales.
-
----
-
-## 🌟 Características
-
-- **Publicación Multi-Plataforma:** Publica simultáneamente en **Facebook Feed**, **Facebook Stories**, **Instagram Feed** e **Instagram Stories**.
-- **4 Franjas Horarias Diarias:** Configurado por defecto para publicar 4 posts y 4 stories al día (10:00, 14:00, 18:00 y 21:00 - Horario de Casablanca).
-- **Lectura Inteligente de Drive:** Detecta archivos sueltos en "My Drive", emparejando la foto (`.jpg`/`.png`) con el texto del Google Doc (`Post X - ...`).
-- **Prevención de Duplicados:** Al publicar, renombra los archivos en Google Drive con el prefijo `[PUBLICADO]`.
-- **Panel Web Seguro:** Protegido con usuario y contraseña, endpoints de salud (`/health`) para Coolify/Docker.
-- **Preparado para Coolify y Docker:** `Dockerfile` basado en `node:20-alpine` con soporte de zona horaria `tzdata`.
+Incluye un **Panel de Control Web** con autenticación, consola de logs en vivo y gestión separada de Feed y Stories.
 
 ---
 
-## 📁 Estructura en Google Drive
+## 🌟 Estructura Diaria (7 Publicaciones al Día)
 
-Los archivos van colocados en la raíz de Google Drive ("Mi unidad"):
-```text
-Mi unidad /
-├── 📄 Post 1 - Renault Kardian - Aeroport Tanger        (Google Doc con el copy)
-├── 🖼️ Post 1 - Renault Kardian - Aeroport Tanger.jpg    (Foto)
-├── 📄 Post 2 - Seat Ibiza FR - Commerciale              (Google Doc con el copy)
-└── 🖼️ Post 2 - Seat Ibiza FR - Commerciale.jpg          (Foto)
-```
+Spark entrega los archivos diarios a las **08:30 AM** directamente en Google Drive ("Mi unidad"):
 
-Al publicarse, el bot los renombra automáticamente a:
-- `[PUBLICADO] Post 1 - Renault Kardian - Aeroport Tanger`
-- `[PUBLICADO] Post 1 - Renault Kardian - Aeroport Tanger.jpg`
+### 1. Los 3 Posts para el Feed (Formato Cuadrado 1:1 con Texto)
+- **Post 1 (Mañana - VIP & Aeropuertos):** `Post 1 - [Modelo] - [Tema].jpg` + Google Doc `Post 1 - [Modelo] - [Tema]`
+- **Post 2 (Mediodía - Afiche Comercial):** `Post 2 - [Modelo] - [Tema].jpg` + Google Doc `Post 2 - [Modelo] - [Tema]` (Tarifas desde 250 DH/día)
+- **Post 3 (Tarde/Noche - Lifestyle / Noche 24/7):** `Post 3 - [Modelo] - [Tema].jpg` + Google Doc `Post 3 - [Modelo] - [Tema]`
+
+### 2. Las 4 Fotos Exclusivas para Stories (Formato Vertical 9:16)
+Imágenes a pantalla completa (1080 × 1920 px) diseñadas para evitar recortes:
+- **Story 1 (Aeronáutica / Llegadas):** `Stories 2s1m - 1 - [Tema].jpg`
+- **Story 2 (Tarifas desde 250 DH):** `Stories 2s1m - 2 - [Tema].jpg`
+- **Story 3 (Escapadas / Ruta norte):** `Stories 2s1m - 3 - [Tema].jpg`
+- **Story 4 (Llamada a la Acción WhatsApp):** `Stories 2s1m - 4 - [Tema].jpg`
+
+---
+
+## ⏰ Las 7 Franjas Diarias Oficiales (Hora de Casablanca / GMT+1)
+
+| Franja | Hora | Tipo | Contenido | Destinos |
+| :---: | :---: | :---: | :--- | :--- |
+| **1** | **10:00** | ⚡ Story | Story 1 (Aeronáutica / Llegadas aeropuertos) | FB & IG Stories |
+| **2** | **11:30** | 🖼️ Post | Post 1 (VIP & Aeropuertos TNG / TTU) | FB & IG Feed |
+| **3** | **13:30** | ⚡ Story | Story 2 (Oferta del Día: desde 250 DH) | FB & IG Stories |
+| **4** | **15:30** | 🖼️ Post | Post 2 (Afiche Comercial con tarifas y WhatsApp) | FB & IG Feed |
+| **5** | **18:00** | ⚡ Story | Story 3 (Destino / Escapadas turísticas norte) | FB & IG Stories |
+| **6** | **20:00** | 🖼️ Post | Post 3 (Lifestyle, Road Trip o Noche 24/7) | FB & IG Feed |
+| **7** | **21:30** | ⚡ Story | Story 4 (Llamada a la acción / Reserva WhatsApp) | FB & IG Stories |
+
+---
+
+## 🏷️ Renombrado en Google Drive
+
+Al publicarse cada post o story, el bot renombra automáticamente los archivos añadiéndoles el prefijo **`[PUBLICADO]`**:
+- `[PUBLICADO] Post 1 - Renault Kardian - Aeroport.jpg`
+- `[PUBLICADO] Post 1 - Renault Kardian - Aeroport`
+- `[PUBLICADO] Stories 2s1m - 1 - Aeroport.jpg`
 
 ---
 
 ## 🚀 Despliegue en Coolify
 
-1. **Crear recurso en Coolify:**
-   - Selecciona **Public / Private Git Repository** y vincula este repositorio.
-   - Coolify detectará el `Dockerfile` automáticamente.
-2. **Puerto:**
-   - Configura el puerto expuesto en `3050`.
-3. **Variables de Entorno:**
-   - Copia las variables desde `.env.example` y define tus credenciales:
-     - `DASHBOARD_USER` y `DASHBOARD_PASS` para proteger el panel.
-     - `FACEBOOK_PAGE_ID` y `FACEBOOK_PAGE_ACCESS_TOKEN` para la API de Meta.
-     - `GOOGLE_CLIENT_ID` y `GOOGLE_CLIENT_SECRET` para conectar Google Drive.
-     - `PUBLIC_SERVER_URL` con tu dominio público de Coolify (ej: `https://publisher.tudominio.com`).
-     - `GOOGLE_REDIRECT_URI` configurado a `https://publisher.tudominio.com/auth/callback`.
-4. **Volumen Persistente (Storages):**
-   - Agrega un volumen persistente mapeando el destino `/app/data` para preservar la sesión de Google (`tokens.json`) y el historial entre reinicios.
-
----
-
-## 💻 Ejecución Local
-
-1. Instalar dependencias:
-   ```bash
-   npm install
-   ```
-2. Configurar variables en `.env`.
-3. Iniciar el servicio:
-   ```bash
-   npm start
-   # O en Windows: doble clic en start.bat
-   ```
-4. Abrir en el navegador: `http://localhost:3050`
+1. **Vincular Repositorio:** `https://github.com/Ahmedelfakirben/Drive-Meta-Publisher`
+2. **Puerto Expuesto:** `3050`
+3. **Volumen Persistente:** `/app/data`
+4. **Variables de Entorno Requeridas:**
+   - `DASHBOARD_USER` y `DASHBOARD_PASS`
+   - `FACEBOOK_PAGE_ID` y `FACEBOOK_PAGE_ACCESS_TOKEN`
+   - `GOOGLE_CLIENT_ID` y `GOOGLE_CLIENT_SECRET`
+   - `PUBLIC_SERVER_URL`
+   - `TIMEZONE=Africa/Casablanca`
