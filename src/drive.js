@@ -151,7 +151,7 @@ export async function getPendingStories() {
   const drive = await getDriveClient();
 
   const res = await drive.files.list({
-    q: "trashed = false and name contains 'Stories 2s1m'",
+    q: "trashed = false and name contains 'Stor'",
     fields: 'files(id, name, mimeType, size, createdTime)',
     pageSize: 100,
     orderBy: 'name'
@@ -163,7 +163,7 @@ export async function getPendingStories() {
     const name = f.name.trim();
     if (name.startsWith('[PUBLICADO]') || name.startsWith('[ERROR]')) return false;
     const isImage = f.mimeType.startsWith('image/') || /\.(jpe?g|png|webp)$/i.test(name);
-    return isImage && name.toLowerCase().startsWith('stories 2s1m');
+    return isImage && /^stor(y|ies)\s*2s1m/i.test(name);
   });
 
   const pendingStories = storyFiles.map(f => ({
